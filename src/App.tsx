@@ -3,12 +3,16 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Navigation } from './components/Navigation';
 import { Home } from './pages/Home';
 import { Analysis } from './pages/Analysis';
-import { Chat } from './pages/Chat';
+import {Chat} from './pages/Chat'; // ✅ default import
+
 import { SignIn } from './pages/SignIn';
 import { SignUp } from './pages/SignUp';
 import { Upload } from './pages/Upload';
 import { Search } from './pages/Search';
 import { VisualInsights } from './pages/VisualInsights';
+import { Features } from './pages/Features';
+import { AIAnalysis } from './pages/AIAnalysis';
+import { KnowledgeGraph } from './pages/KnowledgeGraph';
 
 function App() {
   return (
@@ -24,6 +28,9 @@ function App() {
           <Route path="/signup" element={<SignUp />} />
           <Route path="/upload" element={<Upload />} />
           <Route path="/search" element={<Search />} />
+          <Route path="/features" element={<Features />} />
+          <Route path="/ai-analysis" element={<AIAnalysis />} />
+          <Route path="/knowledge-graph" element={<KnowledgeGraph />} />
         </Routes>
       </div>
     </Router>

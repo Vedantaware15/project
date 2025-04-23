@@ -1,303 +1,158 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, Upload, X, FileText, Loader, AlertCircle } from 'lucide-react';
-import { grokApi } from '../services/grokApi';
-import * as pdfjs from 'pdfjs-dist';
-
-// Initialize PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
-
-interface Message {
-  id: number;
-  text: string;
-  isBot: boolean;
-  isLoading?: boolean;
-  error?: boolean;
-}
-
-interface UploadedFile extends File {
-  content?: string;
-}
+// pages/chat.tsx
+import { useState, useEffect } from 'react';
+import axios from 'axios';
 
 export function Chat() {
-  const [message, setMessage] = useState('');
-  const [files, setFiles] = useState<UploadedFile[]>([]);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 1,
-      text: "Hello! I'm your research assistant powered by Grok. I can help you analyze papers and answer questions about their content. Upload a file to get started!",
-      isBot: true
-    }
-  ]);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfText, setPdfText] = useState('');
+  const [question, setQuestion] = useState('');
+  const [answer, setAnswer] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [backendStatus, setBackendStatus] = useState<string>('');
 
-  // Method 1: Using FileReader for text files
-  const readFileAsText = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (event) => resolve(event.target?.result as string);
-      reader.onerror = (error) => reject(new Error('Failed to read file'));
-      reader.readAsText(file);
-    });
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setPdfFile(e.target.files[0]);
+      setAnswer('');
+      setQuestion('');
+    }
   };
 
-  // Method 2: Using Blob and text() for any text-based file
-  const readFileAsBlob = async (file: File): Promise<string> => {
+  const handleUpload = async () => {
+    if (!pdfFile) return alert("Please upload a PDF first!");
+    const formData = new FormData();
+    formData.append('pdf', pdfFile);
+
     try {
-      const text = await file.text();
-      return text;
+      setLoading(true);
+      const res = await axios.post('http://localhost:5000/upload', formData);
+      setPdfText(res.data.text);
+      alert('PDF uploaded and text extracted!');
     } catch (error) {
-      throw new Error('Failed to read file content');
+      console.error(error);
+      alert('Failed to upload or extract PDF.');
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Method 3: Using ArrayBuffer for binary files
-  const readFileAsBuffer = async (file: File): Promise<string> => {
-    try {
-      const buffer = await file.arrayBuffer();
-      const decoder = new TextDecoder('utf-8');
-      return decoder.decode(buffer);
-    } catch (error) {
-      throw new Error('Failed to read file content');
-    }
-  };
+  const handleAsk = async () => {
+    if (!pdfText || !question) return alert("PDF must be uploaded and a question must be entered.");
 
-  // Method for handling PDF files specifically
-  const readPdfFile = async (file: File): Promise<string> => {
     try {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-      let fullText = '';
+      setLoading(true);
       
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items.map((item: any) => item.str).join(' ');
-        fullText += pageText + '\n';
-      }
+      // Truncate PDF text if it's too large (to avoid request size issues)
+      const truncatedText = pdfText.length > 10000 
+        ? pdfText.substring(0, 10000) + "... (text truncated)" 
+        : pdfText;
       
-      return fullText;
+      console.log(`Sending request with question: "${question}" and text length: ${truncatedText.length}`);
+      
+      const res = await axios.post('http://localhost:5000/ask', {
+        question,
+        pdf_text: truncatedText
+      });
+      
+      console.log('Response received:', res.data);
+      setAnswer(res.data.answer);
     } catch (error) {
-      console.error('Error reading PDF:', error);
-      throw new Error('Failed to read PDF file');
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!message.trim() || isProcessing) return;
-
-    const userMessage: Message = {
-      id: messages.length + 1,
-      text: message,
-      isBot: false
-    };
-
-    const loadingMessage: Message = {
-      id: messages.length + 2,
-      text: "Analyzing your question...",
-      isBot: true,
-      isLoading: true
-    };
-
-    setMessages(prev => [...prev, userMessage, loadingMessage]);
-    setMessage('');
-    setIsProcessing(true);
-
-    try {
-      // Get context from files
-      let context = '';
-      if (files.length > 0) {
-        context = files.map(file => 
-          `File: ${file.name}\nContent: ${file.content || ''}\n`
-        ).join('\n');
-      }
-
-      // Get response from Grok
-      const response = await grokApi.sendMessage([
-        {
-          role: 'system',
-          content: 'You are a research assistant AI that helps analyze papers and answer questions about them. Base your answers on the provided paper content.'
-        },
-        {
-          role: 'user',
-          content: `Context from uploaded files:\n${context}\n\nQuestion: ${message}`
+      console.error('Error details:', error);
+      
+      // Extract more detailed error information
+      let errorMessage = 'Failed to get answer.';
+      if (axios.isAxiosError(error) && error.response) {
+        errorMessage = `Server error: ${error.response.status} - ${error.response.statusText}`;
+        if (error.response.data && error.response.data.error) {
+          errorMessage += `\n${error.response.data.error}`;
         }
-      ]);
-
-      setMessages(prev => 
-        prev.filter(msg => !msg.isLoading).concat({
-          id: prev.length + 1,
-          text: response,
-          isBot: true
-        })
-      );
-    } catch (error: any) {
-      setMessages(prev => 
-        prev.filter(msg => !msg.isLoading).concat({
-          id: prev.length + 1,
-          text: error.message || "I apologize, but I encountered an error. Please try again.",
-          isBot: true,
-          error: true
-        })
-      );
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      setIsProcessing(true);
-      let text = '';
-
-      if (file.type === 'application/pdf') {
-        text = await readPdfFile(file);
-      } else {
-        text = await file.text();
       }
-
-      const processedFile = Object.assign(file, { content: text });
-      setFiles(prev => [...prev, processedFile]);
-
-      // Get initial analysis from Grok
-      const analysis = await grokApi.analyzePaper(text);
       
-      setMessages(prev => 
-        prev.filter(msg => !msg.isLoading).concat({
-          id: prev.length + 1,
-          text: `Analysis of ${file.name}:\n\n${analysis}`,
-          isBot: true
-        })
-      );
-    } catch (error: any) {
-      setMessages(prev => 
-        prev.filter(msg => !msg.isLoading).concat({
-          id: prev.length + 1,
-          text: error.message || "Error processing file. Please try again.",
-          isBot: true,
-          error: true
-        })
-      );
+      alert(errorMessage);
+      setAnswer(`Error: ${errorMessage}`);
     } finally {
-      setIsProcessing(false);
+      setLoading(false);
     }
   };
 
-  const removeFile = (index: number) => {
-    setFiles(prev => prev.filter((_, i) => i !== index));
+  // Test backend connection
+  const testBackend = async () => {
+    try {
+      setLoading(true);
+      const res = await axios.get('http://localhost:5000/test');
+      setBackendStatus(`Backend status: ${res.data.status} - ${res.data.message}`);
+      console.log('Backend test response:', res.data);
+    } catch (error) {
+      console.error('Backend test error:', error);
+      setBackendStatus('Backend connection failed. Check if the server is running.');
+    } finally {
+      setLoading(false);
+    }
   };
+
+  // Call testBackend when component mounts
+  useEffect(() => {
+    testBackend();
+  }, []);
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="bg-white rounded-lg shadow-lg h-[calc(100vh-12rem)]">
-        <div className="flex flex-col h-full">
-          <div className="p-4 border-b">
-            <h1 className="text-xl font-semibold text-gray-900">Research Assistant</h1>
-            <p className="text-sm text-gray-500">Powered by Grok - Upload files and ask questions about them</p>
-          </div>
-
-          {/* File List */}
-          {files.length > 0 && (
-            <div className="px-4 py-2 border-b bg-gray-50">
-              <div className="flex items-center gap-2 mb-2">
-                <FileText className="h-4 w-4 text-gray-500" />
-                <span className="text-sm font-medium text-gray-700">Uploaded Files</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {files.map((file, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center gap-2 bg-white px-3 py-1 rounded-full border text-sm"
-                  >
-                    <span className="text-gray-600">{file.name}</span>
-                    <button
-                      onClick={() => removeFile(index)}
-                      className="text-gray-400 hover:text-gray-600"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex ${msg.isBot ? 'justify-start' : 'justify-end'}`}
-              >
-                <div
-                  className={`flex max-w-[80%] ${
-                    msg.isBot
-                      ? msg.error 
-                        ? 'bg-red-50 text-red-700'
-                        : 'bg-gray-100 text-gray-900'
-                      : 'bg-indigo-600 text-white'
-                  } rounded-lg px-4 py-2`}
-                >
-                  {msg.isBot && (
-                    msg.isLoading ? (
-                      <Loader className="h-5 w-5 mr-2 flex-shrink-0 mt-1 animate-spin" />
-                    ) : msg.error ? (
-                      <AlertCircle className="h-5 w-5 mr-2 flex-shrink-0 mt-1" />
-                    ) : (
-                      <Bot className="h-5 w-5 mr-2 flex-shrink-0 mt-1" />
-                    )
-                  )}
-                  <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="p-4 border-t">
-            <div className="flex items-center gap-4 mb-4">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isProcessing}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-              >
-                <Upload className="h-4 w-4" />
-                Upload Files
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".txt,.pdf,.doc,.docx"
-                multiple
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-            </div>
-            <form onSubmit={handleSubmit} className="flex space-x-4">
-              <input
-                type="text"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Ask a question about your files..."
-                disabled={isProcessing}
-                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-              />
-              <button
-                type="submit"
-                disabled={isProcessing || !message.trim()}
-                className="bg-indigo-600 text-white rounded-lg px-4 py-2 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-              >
-                {isProcessing ? (
-                  <Loader className="h-5 w-5 animate-spin" />
-                ) : (
-                  <Send className="h-5 w-5" />
-                )}
-              </button>
-            </form>
-          </div>
+    <div className="container mx-auto px-4 py-8">
+      <h1 className="text-2xl font-bold mb-4">PDF Chat Assistant</h1>
+      
+      {backendStatus && (
+        <div className={`mb-4 p-3 rounded ${backendStatus.includes('failed') ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+          {backendStatus}
         </div>
+      )}
+      
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="mb-4">
+          <input 
+            type="file" 
+            accept="application/pdf" 
+            onChange={handleFileChange} 
+            className="block w-full text-sm text-gray-500
+              file:mr-4 file:py-2 file:px-4
+              file:rounded-full file:border-0
+              file:text-sm file:font-semibold
+              file:bg-indigo-50 file:text-indigo-700
+              hover:file:bg-indigo-100"
+          />
+        </div>
+        
+        <button
+          onClick={handleUpload}
+          className="bg-indigo-600 text-white px-4 py-2 rounded mb-4 hover:bg-indigo-700 disabled:opacity-50"
+          disabled={loading || !pdfFile}
+        >
+          {loading ? 'Uploading...' : 'Upload PDF'}
+        </button>
+
+        {pdfText && (
+          <div className="mb-4">
+            <textarea
+              className="w-full p-2 border rounded"
+              rows={3}
+              placeholder="Ask a question about the PDF..."
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+            />
+            <button
+              onClick={handleAsk}
+              className="bg-green-600 text-white px-4 py-2 rounded mt-2 hover:bg-green-700 disabled:opacity-50"
+              disabled={loading || !question}
+            >
+              {loading ? 'Thinking...' : 'Ask Question'}
+            </button>
+          </div>
+        )}
+
+        {answer && (
+          <div className="mt-4 p-4 border rounded bg-gray-50">
+            <strong className="text-gray-700">Answer:</strong>
+            <p className="mt-2 text-gray-600">{answer}</p>
+          </div>
+        )}
       </div>
     </div>
   );

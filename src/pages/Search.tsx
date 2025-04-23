@@ -3,7 +3,7 @@ import { Search as SearchIcon, Filter, Calendar, User, BookOpen, Presentation as
 import axios from 'axios';
 
 // API base URL
-const API_BASE_URL = 'http://localhost:5000/api/semantic';
+const API_BASE_URL = 'http://localhost:5002/api/semantic';
 
 // Filter options
 const YEAR_OPTIONS = [
